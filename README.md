@@ -31,7 +31,3 @@ go mod download
 go test ./...
 go run cmd/main.go
 ```
-
-## License
-
-MIT
