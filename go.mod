@@ -3,7 +3,7 @@ module github.com/duynhne/auth-service
 go 1.25.5
 
 require (
-	github.com/duynhne/pkg v0.0.0
+	github.com/duynhne/pkg v0.1.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/grafana/pyroscope-go v1.2.7
 	github.com/jackc/pgx/v5 v5.8.0
@@ -75,4 +75,4 @@ require (
 )
 
 // For local development with pkg
-replace github.com/duynhne/pkg => ../pkg
+// replace github.com/duynhne/pkg => ../pkg
