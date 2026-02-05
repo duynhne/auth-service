@@ -33,3 +33,7 @@ jobs:
       image-name: 'auth-service'
       push: true
     secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
