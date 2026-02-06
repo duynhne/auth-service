@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os/signal"
 	"sync/atomic"
@@ -12,11 +13,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 
-	"github.com/duynhne/pkg/logger/zerolog"
 	"github.com/duynhne/auth-service/config"
 	database "github.com/duynhne/auth-service/internal/core"
 	v1 "github.com/duynhne/auth-service/internal/web/v1"
 	"github.com/duynhne/auth-service/middleware"
+	"github.com/duynhne/pkg/logger/zerolog"
 )
 
 func main() {
@@ -70,11 +71,19 @@ func main() {
 	// Initialize database connection pool (pgx)
 	pool, err := database.Connect(context.Background())
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
+		log.Error().Err(err).Msg("Failed to connect to database")
+		return
 	}
 	defer pool.Close()
 	log.Info().Msg("Database connection pool established")
 
+	// Setup router and server, then run with graceful shutdown
+	srv := setupServer(cfg)
+	runGracefulShutdown(cfg, srv, tp)
+}
+
+// setupServer creates and configures the HTTP server with all routes and middleware
+func setupServer(cfg *config.Config) *http.Server {
 	r := gin.Default()
 
 	var isShuttingDown atomic.Bool
@@ -114,16 +123,20 @@ func main() {
 		apiV1.GET("/auth/me", v1.GetMe)
 	}
 
-	// Create HTTP server
-	srv := &http.Server{
-		Addr:    ":" + cfg.Service.Port,
-		Handler: r,
+	// Create HTTP server with ReadHeaderTimeout to prevent Slowloris attacks
+	return &http.Server{
+		Addr:              ":" + cfg.Service.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
+}
 
+// runGracefulShutdown starts the server and handles graceful shutdown
+func runGracefulShutdown(cfg *config.Config, srv *http.Server, tp interface{ Shutdown(context.Context) error }) {
 	// Start server in a goroutine
 	go func() {
 		log.Info().Str("port", cfg.Service.Port).Msg("Starting auth service")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal().Err(err).Msg("Failed to start server")
 		}
 	}()
@@ -137,7 +150,6 @@ func main() {
 	log.Info().Msg("Shutdown signal received")
 
 	// Fail readiness first and wait for propagation (best practice for K8s rollout).
-	isShuttingDown.Store(true)
 	drainDelay := cfg.GetReadinessDrainDelayDuration()
 	if drainDelay > 0 {
 		log.Info().Dur("delay", drainDelay).Msg("Readiness drain delay started")
@@ -159,11 +171,7 @@ func main() {
 		log.Info().Msg("HTTP server shutdown complete")
 	}
 
-	// 2. Close database connections
-	pool.Close()
-	log.Info().Msg("Database pool closed")
-
-	// 3. Shutdown tracer
+	// 2. Shutdown tracer
 	if tp != nil {
 		if err := tp.Shutdown(shutdownCtx); err != nil {
 			log.Error().Err(err).Msg("Tracer shutdown error")

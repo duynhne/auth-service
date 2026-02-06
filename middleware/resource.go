@@ -2,12 +2,16 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
+
+// unknownService is the default service name when detection fails
+const unknownService = "unknown-service"
 
 // detectServiceInfo automatically detects service name and namespace from Kubernetes environment
 // This function uses multiple detection methods with fallback priority:
@@ -52,7 +56,7 @@ func detectServiceInfo() (serviceName, namespace string) {
 
 	// Fallback if still empty
 	if serviceName == "" {
-		serviceName = "unknown-service"
+		serviceName = unknownService
 	}
 
 	// Detect namespace
@@ -106,12 +110,13 @@ func CreateResource(ctx context.Context) (*resource.Resource, error) {
 	)
 
 	if err != nil {
-		// If resource creation fails, create minimal resource
+		// If resource creation fails, create minimal resource with fallback
+		// Return the original error wrapped so callers can decide to log or ignore
 		return resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String(serviceName),
 			semconv.ServiceNamespaceKey.String(namespace),
-		), nil
+		), fmt.Errorf("resource detection partial failure (using fallback): %w", err)
 	}
 
 	return res, nil
@@ -124,5 +129,5 @@ func GetServiceName(res *resource.Resource) string {
 			return attr.Value.AsString()
 		}
 	}
-	return "unknown-service"
+	return unknownService
 }

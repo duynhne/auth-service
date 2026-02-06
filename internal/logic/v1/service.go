@@ -36,7 +36,7 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 	// Get database connection pool (pgx)
 	pool := database.GetPool()
 	if pool == nil {
-		return nil, fmt.Errorf("database connection not available")
+		return nil, errors.New("database connection not available")
 	}
 
 	// Query user from database
@@ -117,7 +117,7 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	// Get database connection pool (pgx)
 	pool := database.GetPool()
 	if pool == nil {
-		return nil, fmt.Errorf("database connection not available")
+		return nil, errors.New("database connection not available")
 	}
 
 	// Hash password
@@ -191,7 +191,7 @@ func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*domain
 
 	pool := database.GetPool()
 	if pool == nil {
-		return nil, fmt.Errorf("database connection not available")
+		return nil, errors.New("database connection not available")
 	}
 
 	// Query session and join with user

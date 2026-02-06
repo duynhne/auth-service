@@ -22,6 +22,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,9 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+// defaultServiceName is the fallback service name when SERVICE_NAME is not set
+const defaultServiceName = "unknown"
 
 // Config holds all configuration for a microservice
 type Config struct {
@@ -99,8 +103,9 @@ type DatabaseConfig struct {
 // BuildDSN constructs PostgreSQL connection string from config
 func (c *DatabaseConfig) BuildDSN() string {
 	// Format: postgresql://user:password@host:port/dbname?sslmode=disable
-	return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
-		c.User, c.Password, c.Host, c.Port, c.Name, c.SSLMode)
+	hostPort := net.JoinHostPort(c.Host, c.Port)
+	return fmt.Sprintf("postgresql://%s:%s@%s/%s?sslmode=%s",
+		c.User, c.Password, hostPort, c.Name, c.SSLMode)
 }
 
 // Load reads configuration from environment variables with defaults
@@ -115,7 +120,7 @@ func Load() *Config {
 
 	return &Config{
 		Service: ServiceConfig{
-			Name:    getEnv("SERVICE_NAME", "unknown"),
+			Name:    getEnv("SERVICE_NAME", defaultServiceName),
 			Port:    getEnv("PORT", "8080"),
 			Version: getEnv("VERSION", "dev"),
 			Env:     getEnv("ENV", "development"),
@@ -124,13 +129,13 @@ func Load() *Config {
 			Enabled:            getEnvBool("TRACING_ENABLED", true),
 			Endpoint:           getEnv("OTEL_COLLECTOR_ENDPOINT", "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318"),
 			SampleRate:         getEnvFloat("OTEL_SAMPLE_RATE", 0.1), // 10% default (production)
-			ServiceName:        getEnv("SERVICE_NAME", "unknown"),
+			ServiceName:        getEnv("SERVICE_NAME", defaultServiceName),
 			MaxExportBatchSize: getEnvInt("OTEL_BATCH_SIZE", 512),
 		},
 		Profiling: ProfilingConfig{
 			Enabled:     getEnvBool("PROFILING_ENABLED", true),
 			Endpoint:    getEnv("PYROSCOPE_ENDPOINT", "http://pyroscope.monitoring.svc.cluster.local:4040"),
-			ServiceName: getEnv("SERVICE_NAME", "unknown"),
+			ServiceName: getEnv("SERVICE_NAME", defaultServiceName),
 		},
 		Logging: LoggingConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),
@@ -159,82 +164,121 @@ func Load() *Config {
 // Validate performs comprehensive validation of all configuration fields
 // Returns detailed error messages for SRE/DevOps troubleshooting
 func (c *Config) Validate() error {
-	var errors []string
+	var errs []string
 
-	// Service validation
-	if c.Service.Name == "" || c.Service.Name == "unknown" {
-		errors = append(errors, "SERVICE_NAME is required (e.g., 'auth', 'user', 'product')")
-	}
-	if c.Service.Port == "" {
-		errors = append(errors, "PORT is required (e.g., '8080')")
-	}
-	// Validate port is a valid number
-	if _, err := strconv.Atoi(c.Service.Port); err != nil {
-		errors = append(errors, fmt.Sprintf("PORT must be a valid number, got: %s", c.Service.Port))
-	}
-	// Validate environment
-	validEnvs := []string{"development", "dev", "staging", "stage", "production", "prod"}
-	if !contains(validEnvs, c.Service.Env) {
-		errors = append(errors, fmt.Sprintf("ENV must be one of %v, got: %s", validEnvs, c.Service.Env))
-	}
+	errs = append(errs, c.validateService()...)
+	errs = append(errs, c.validateTracing()...)
+	errs = append(errs, c.validateProfiling()...)
+	errs = append(errs, c.validateLogging()...)
+	errs = append(errs, c.validateDatabase()...)
 
-	// Tracing validation
-	if c.Tracing.Enabled {
-		if c.Tracing.Endpoint == "" {
-			errors = append(errors, "OTEL_COLLECTOR_ENDPOINT is required when tracing is enabled")
-		}
-		if c.Tracing.SampleRate < 0 || c.Tracing.SampleRate > 1.0 {
-			errors = append(errors, fmt.Sprintf("OTEL_SAMPLE_RATE must be between 0.0 and 1.0, got: %.2f", c.Tracing.SampleRate))
-		}
-		if c.Tracing.ServiceName == "" || c.Tracing.ServiceName == "unknown" {
-			errors = append(errors, "SERVICE_NAME is required for tracing (used in Tempo queries)")
-		}
-	}
-
-	// Profiling validation
-	if c.Profiling.Enabled {
-		if c.Profiling.Endpoint == "" {
-			errors = append(errors, "PYROSCOPE_ENDPOINT is required when profiling is enabled")
-		}
-		if c.Profiling.ServiceName == "" || c.Profiling.ServiceName == "unknown" {
-			errors = append(errors, "SERVICE_NAME is required for profiling (used in Pyroscope UI)")
-		}
-	}
-
-	// Logging validation
-	validLogLevels := []string{"debug", "info", "warn", "error"}
-	if !contains(validLogLevels, strings.ToLower(c.Logging.Level)) {
-		errors = append(errors, fmt.Sprintf("LOG_LEVEL must be one of %v, got: %s", validLogLevels, c.Logging.Level))
-	}
-	validLogFormats := []string{"json", "console"}
-	if !contains(validLogFormats, strings.ToLower(c.Logging.Format)) {
-		errors = append(errors, fmt.Sprintf("LOG_FORMAT must be one of %v, got: %s", validLogFormats, c.Logging.Format))
-	}
-
-	// Database validation (if database is configured)
-	if c.Database.Host != "" {
-		if c.Database.Name == "" {
-			errors = append(errors, "DB_NAME is required when DB_HOST is set")
-		}
-		if c.Database.User == "" {
-			errors = append(errors, "DB_USER is required when DB_HOST is set")
-		}
-		if c.Database.Password == "" {
-			errors = append(errors, "DB_PASSWORD is required when DB_HOST is set")
-		}
-		// Validate port is a valid number
-		if c.Database.Port != "" {
-			if _, err := strconv.Atoi(c.Database.Port); err != nil {
-				errors = append(errors, fmt.Sprintf("DB_PORT must be a valid number, got: %s", c.Database.Port))
-			}
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errors, "\n  - "))
+	if len(errs) > 0 {
+		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 
 	return nil
+}
+
+// validateService validates service configuration fields
+func (c *Config) validateService() []string {
+	var errs []string
+
+	if c.Service.Name == "" || c.Service.Name == defaultServiceName {
+		errs = append(errs, "SERVICE_NAME is required (e.g., 'auth', 'user', 'product')")
+	}
+	if c.Service.Port == "" {
+		errs = append(errs, "PORT is required (e.g., '8080')")
+	}
+	if _, err := strconv.Atoi(c.Service.Port); err != nil {
+		errs = append(errs, "PORT must be a valid number, got: "+c.Service.Port)
+	}
+	validEnvs := []string{"development", "dev", "staging", "stage", "production", "prod"}
+	if !contains(validEnvs, c.Service.Env) {
+		errs = append(errs, fmt.Sprintf("ENV must be one of %v, got: %s", validEnvs, c.Service.Env))
+	}
+
+	return errs
+}
+
+// validateTracing validates tracing configuration fields
+func (c *Config) validateTracing() []string {
+	if !c.Tracing.Enabled {
+		return nil
+	}
+
+	var errs []string
+
+	if c.Tracing.Endpoint == "" {
+		errs = append(errs, "OTEL_COLLECTOR_ENDPOINT is required when tracing is enabled")
+	}
+	if c.Tracing.SampleRate < 0 || c.Tracing.SampleRate > 1.0 {
+		errs = append(errs, fmt.Sprintf("OTEL_SAMPLE_RATE must be between 0.0 and 1.0, got: %.2f", c.Tracing.SampleRate))
+	}
+	if c.Tracing.ServiceName == "" || c.Tracing.ServiceName == defaultServiceName {
+		errs = append(errs, "SERVICE_NAME is required for tracing (used in Tempo queries)")
+	}
+
+	return errs
+}
+
+// validateProfiling validates profiling configuration fields
+func (c *Config) validateProfiling() []string {
+	if !c.Profiling.Enabled {
+		return nil
+	}
+
+	var errs []string
+
+	if c.Profiling.Endpoint == "" {
+		errs = append(errs, "PYROSCOPE_ENDPOINT is required when profiling is enabled")
+	}
+	if c.Profiling.ServiceName == "" || c.Profiling.ServiceName == defaultServiceName {
+		errs = append(errs, "SERVICE_NAME is required for profiling (used in Pyroscope UI)")
+	}
+
+	return errs
+}
+
+// validateLogging validates logging configuration fields
+func (c *Config) validateLogging() []string {
+	var errs []string
+
+	validLogLevels := []string{"debug", "info", "warn", "error"}
+	if !contains(validLogLevels, strings.ToLower(c.Logging.Level)) {
+		errs = append(errs, fmt.Sprintf("LOG_LEVEL must be one of %v, got: %s", validLogLevels, c.Logging.Level))
+	}
+	validLogFormats := []string{"json", "console"}
+	if !contains(validLogFormats, strings.ToLower(c.Logging.Format)) {
+		errs = append(errs, fmt.Sprintf("LOG_FORMAT must be one of %v, got: %s", validLogFormats, c.Logging.Format))
+	}
+
+	return errs
+}
+
+// validateDatabase validates database configuration fields
+func (c *Config) validateDatabase() []string {
+	if c.Database.Host == "" {
+		return nil
+	}
+
+	var errs []string
+
+	if c.Database.Name == "" {
+		errs = append(errs, "DB_NAME is required when DB_HOST is set")
+	}
+	if c.Database.User == "" {
+		errs = append(errs, "DB_USER is required when DB_HOST is set")
+	}
+	if c.Database.Password == "" {
+		errs = append(errs, "DB_PASSWORD is required when DB_HOST is set")
+	}
+	if c.Database.Port != "" {
+		if _, err := strconv.Atoi(c.Database.Port); err != nil {
+			errs = append(errs, "DB_PORT must be a valid number, got: "+c.Database.Port)
+		}
+	}
+
+	return errs
 }
 
 // IsDevelopment returns true if running in development environment
