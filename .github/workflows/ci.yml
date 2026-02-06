@@ -74,7 +74,7 @@ jobs:
     with:
       slack_channel_id: "C0AD82A9A74"
       slack_thread_ts: ${{ needs.pr-checks.outputs.slack_thread_ts }}
-      gsheet_spreadsheet_id: ${{ secrets.GSHEET_SPREADSHEET_ID }}
+      gsheet_spreadsheet_id: "1F2VUrAOyMGnETApp5yA-ldCW81ConiQXnWYZVxKas_0"
     secrets:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
