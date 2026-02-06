@@ -7,8 +7,8 @@ import (
 	"github.com/duynhne/auth-service/internal/core/domain"
 	logicv1 "github.com/duynhne/auth-service/internal/logic/v1"
 	"github.com/duynhne/auth-service/middleware"
+	pkgzerolog "github.com/duynhne/pkg/logger/zerolog"
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -26,7 +26,7 @@ func Login(c *gin.Context) {
 	defer span.End()
 
 	// Get logger from context
-	logger := zerolog.Ctx(ctx)
+	logger := pkgzerolog.FromContext(ctx)
 
 	var req domain.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -78,7 +78,7 @@ func Register(c *gin.Context) {
 	defer span.End()
 
 	// Get logger from context
-	logger := zerolog.Ctx(ctx)
+	logger := pkgzerolog.FromContext(ctx)
 
 	var req domain.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -125,7 +125,7 @@ func GetMe(c *gin.Context) {
 	))
 	defer span.End()
 
-	logger := zerolog.Ctx(ctx)
+	logger := pkgzerolog.FromContext(ctx)
 
 	// Extract token from Authorization header
 	authHeader := c.GetHeader("Authorization")

@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/rs/zerolog/log"
 )
 
 var profiler *pyroscope.Profiler
@@ -52,6 +53,8 @@ func InitProfiling() error {
 // StopProfiling stops Pyroscope profiling
 func StopProfiling() {
 	if profiler != nil {
-		profiler.Stop()
+		if err := profiler.Stop(); err != nil {
+			log.Error().Err(err).Msg("Failed to stop profiler")
+		}
 	}
 }
