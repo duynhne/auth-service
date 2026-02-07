@@ -26,10 +26,35 @@ Authentication microservice for user login, registration, and JWT token manageme
 
 ## Development
 
+### Prerequisites
+
+- Go 1.25+
+- [golangci-lint](https://golangci-lint.run/welcome/install/) v2+
+
+### Local Development
+
 ```bash
+# Install dependencies
+go mod tidy
 go mod download
+
+# Build
+go build ./...
+
+# Test
 go test ./...
+
+# Lint (must pass before PR merge)
+golangci-lint run --timeout=10m
+
+# Run locally (requires .env or env vars)
 go run cmd/main.go
+```
+
+### Pre-push Checklist
+
+```bash
+go build ./... && go test ./... && golangci-lint run --timeout=10m
 ```
 
 ## License
