@@ -13,11 +13,26 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var authService = logicv1.NewAuthService()
+// Handler groups HTTP handlers for the auth API v1.
+// Dependencies are injected via the constructor — no global state.
+type Handler struct {
+	auth *logicv1.AuthService
+}
 
-// Login handles HTTP request for user login
-func Login(c *gin.Context) {
-	// Create span for web layer
+// NewHandler creates a new Handler with the given AuthService.
+func NewHandler(auth *logicv1.AuthService) *Handler {
+	return &Handler{auth: auth}
+}
+
+// RegisterRoutes registers all auth API v1 routes on the given router group.
+func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.POST("/auth/login", h.Login)
+	rg.POST("/auth/register", h.Register)
+	rg.GET("/auth/me", h.GetMe)
+}
+
+// Login handles HTTP request for user login.
+func (h *Handler) Login(c *gin.Context) {
 	ctx, span := middleware.StartSpan(c.Request.Context(), "http.request", trace.WithAttributes(
 		attribute.String("layer", "web"),
 		attribute.String("method", c.Request.Method),
@@ -25,7 +40,6 @@ func Login(c *gin.Context) {
 	))
 	defer span.End()
 
-	// Get logger from context
 	logger := pkgzerolog.FromContext(ctx)
 
 	var req domain.LoginRequest
@@ -40,13 +54,11 @@ func Login(c *gin.Context) {
 	span.SetAttributes(attribute.Bool("request.valid", true))
 
 	// Call business logic layer
-	response, err := authService.Login(ctx, req)
+	response, err := h.auth.Login(ctx, req)
 	if err != nil {
 		span.RecordError(err)
-		// Log the full error with context
 		logger.Error().Err(err).Msg("Login failed")
 
-		// Check error type using errors.Is() and map to appropriate HTTP response
 		switch {
 		case errors.Is(err, logicv1.ErrInvalidCredentials):
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
@@ -67,9 +79,8 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Register handles HTTP request for user registration
-func Register(c *gin.Context) {
-	// Create span for web layer
+// Register handles HTTP request for user registration.
+func (h *Handler) Register(c *gin.Context) {
 	ctx, span := middleware.StartSpan(c.Request.Context(), "http.request", trace.WithAttributes(
 		attribute.String("layer", "web"),
 		attribute.String("method", c.Request.Method),
@@ -77,7 +88,6 @@ func Register(c *gin.Context) {
 	))
 	defer span.End()
 
-	// Get logger from context
 	logger := pkgzerolog.FromContext(ctx)
 
 	var req domain.RegisterRequest
@@ -92,7 +102,7 @@ func Register(c *gin.Context) {
 	span.SetAttributes(attribute.Bool("request.valid", true))
 
 	// Call business logic layer
-	response, err := authService.Register(ctx, req)
+	response, err := h.auth.Register(ctx, req)
 	if err != nil {
 		span.RecordError(err)
 		logger.Error().
@@ -100,7 +110,6 @@ func Register(c *gin.Context) {
 			Str("username", req.Username).
 			Msg("Registration failed")
 
-		// Check error type and map to appropriate HTTP response
 		switch {
 		case errors.Is(err, logicv1.ErrUserExists):
 			c.JSON(http.StatusConflict, gin.H{"error": "Username or email already exists"})
@@ -114,10 +123,10 @@ func Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
-// GetMe handles HTTP request to get current user from session token
+// GetMe handles HTTP request to get current user from session token.
 // GET /api/v1/auth/me
 // Authorization: Bearer <token>
-func GetMe(c *gin.Context) {
+func (h *Handler) GetMe(c *gin.Context) {
 	ctx, span := middleware.StartSpan(c.Request.Context(), "http.request", trace.WithAttributes(
 		attribute.String("layer", "web"),
 		attribute.String("method", c.Request.Method),
@@ -147,7 +156,7 @@ func GetMe(c *gin.Context) {
 	span.SetAttributes(attribute.Bool("auth.present", true))
 
 	// Lookup user by token
-	user, err := authService.GetUserByToken(ctx, token)
+	user, err := h.auth.GetUserByToken(ctx, token)
 	if err != nil {
 		span.RecordError(err)
 		logger.Warn().Err(err).Msg("Token lookup failed")

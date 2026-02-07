@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 
 	"github.com/duynhne/auth-service/config"
 	database "github.com/duynhne/auth-service/internal/core"
-	v1 "github.com/duynhne/auth-service/internal/web/v1"
+	"github.com/duynhne/auth-service/internal/core/repository"
+	logicv1 "github.com/duynhne/auth-service/internal/logic/v1"
+	webv1 "github.com/duynhne/auth-service/internal/web/v1"
 	"github.com/duynhne/auth-service/middleware"
 	"github.com/duynhne/pkg/logger/zerolog"
 )
@@ -74,19 +77,24 @@ func main() {
 		log.Error().Err(err).Msg("Failed to connect to database")
 		return
 	}
-	defer pool.Close()
+	// pool.Close() is called explicitly during graceful shutdown (step 2).
 	log.Info().Msg("Database connection pool established")
 
+	// Wire dependencies: Core repositories -> Logic service -> Web handler
+	userRepo := repository.NewUserRepository(pool)
+	sessionRepo := repository.NewSessionRepository(pool)
+	authSvc := logicv1.NewAuthService(userRepo, sessionRepo)
+	handler := webv1.NewHandler(authSvc)
+
 	// Setup router and server, then run with graceful shutdown
-	srv := setupServer(cfg)
-	runGracefulShutdown(cfg, srv, tp)
+	var isShuttingDown atomic.Bool
+	srv := setupServer(cfg, handler, &isShuttingDown)
+	runGracefulShutdown(cfg, srv, pool, tp, &isShuttingDown)
 }
 
-// setupServer creates and configures the HTTP server with all routes and middleware
-func setupServer(cfg *config.Config) *http.Server {
+// setupServer creates and configures the HTTP server with all routes and middleware.
+func setupServer(cfg *config.Config, handler *webv1.Handler, isShuttingDown *atomic.Bool) *http.Server {
 	r := gin.Default()
-
-	var isShuttingDown atomic.Bool
 
 	// Tracing middleware
 	r.Use(middleware.TracingMiddleware())
@@ -117,11 +125,7 @@ func setupServer(cfg *config.Config) *http.Server {
 
 	// API v1 (canonical API - frontend-aligned)
 	apiV1 := r.Group("/api/v1")
-	{
-		apiV1.POST("/auth/login", v1.Login)
-		apiV1.POST("/auth/register", v1.Register)
-		apiV1.GET("/auth/me", v1.GetMe)
-	}
+	handler.RegisterRoutes(apiV1)
 
 	// Create HTTP server with ReadHeaderTimeout to prevent Slowloris attacks
 	return &http.Server{
@@ -131,8 +135,15 @@ func setupServer(cfg *config.Config) *http.Server {
 	}
 }
 
-// runGracefulShutdown starts the server and handles graceful shutdown
-func runGracefulShutdown(cfg *config.Config, srv *http.Server, tp interface{ Shutdown(context.Context) error }) {
+// runGracefulShutdown starts the server and handles graceful shutdown.
+// Shutdown sequence (VictoriaMetrics pattern): /ready → 503 → drain delay → HTTP → Database → Tracer.
+func runGracefulShutdown(
+	cfg *config.Config,
+	srv *http.Server,
+	pool *pgxpool.Pool,
+	tp interface{ Shutdown(context.Context) error },
+	isShuttingDown *atomic.Bool,
+) {
 	// Start server in a goroutine
 	go func() {
 		log.Info().Str("port", cfg.Service.Port).Msg("Starting auth service")
@@ -148,6 +159,9 @@ func runGracefulShutdown(cfg *config.Config, srv *http.Server, tp interface{ Shu
 	// Wait for shutdown signal
 	<-ctx.Done()
 	log.Info().Msg("Shutdown signal received")
+
+	// Mark service as shutting down so /ready returns 503 immediately.
+	isShuttingDown.Store(true)
 
 	// Fail readiness first and wait for propagation (best practice for K8s rollout).
 	drainDelay := cfg.GetReadinessDrainDelayDuration()
@@ -171,7 +185,13 @@ func runGracefulShutdown(cfg *config.Config, srv *http.Server, tp interface{ Shu
 		log.Info().Msg("HTTP server shutdown complete")
 	}
 
-	// 2. Shutdown tracer
+	// 2. Close database connection pool
+	if pool != nil {
+		pool.Close()
+		log.Info().Msg("Database connection pool closed")
+	}
+
+	// 3. Shutdown tracer
 	if tp != nil {
 		if err := tp.Shutdown(shutdownCtx); err != nil {
 			log.Error().Err(err).Msg("Tracer shutdown error")
