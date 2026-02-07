@@ -2,13 +2,10 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	database "github.com/duynhne/auth-service/internal/core"
 	"github.com/duynhne/auth-service/internal/core/domain"
 	"github.com/duynhne/auth-service/middleware"
 	"go.opentelemetry.io/otel/attribute"
@@ -16,78 +13,68 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// AuthService defines the business logic interface for authentication
-type AuthService struct{}
-
-// NewAuthService creates a new auth service
-func NewAuthService() *AuthService {
-	return &AuthService{}
+// AuthService implements authentication business rules.
+// It depends on repository interfaces (injected via constructor) and
+// MUST NOT access the database or SQL directly.
+type AuthService struct {
+	users    domain.UserRepository
+	sessions domain.SessionRepository
 }
 
-// Login handles user login business logic
+// NewAuthService creates a new AuthService with the given repository dependencies.
+func NewAuthService(users domain.UserRepository, sessions domain.SessionRepository) *AuthService {
+	return &AuthService{
+		users:    users,
+		sessions: sessions,
+	}
+}
+
+// Login handles user login business logic.
 func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.AuthResponse, error) {
-	// Create span for business logic layer
 	ctx, span := middleware.StartSpan(ctx, "auth.login", trace.WithAttributes(
 		attribute.String("layer", "logic"),
 		attribute.String("username", req.Username),
 	))
 	defer span.End()
 
-	// Get database connection pool (pgx)
-	pool := database.GetPool()
-	if pool == nil {
-		return nil, errors.New("database connection not available")
-	}
-
-	// Query user from database
-	var userID int
-	var username, email, passwordHash string
-	var lastLogin *time.Time
-
-	query := `SELECT id, username, email, password_hash, last_login FROM users WHERE username = $1`
-	err := pool.QueryRow(ctx, query, req.Username).Scan(&userID, &username, &email, &passwordHash, &lastLogin)
+	// Lookup user by username via repository
+	row, err := s.users.GetByUsername(ctx, req.Username)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			span.SetAttributes(attribute.Bool("auth.success", false))
-			span.AddEvent("authentication.failed")
-			return nil, fmt.Errorf("authenticate user %q: %w", req.Username, ErrUserNotFound)
-		}
 		span.RecordError(err)
 		return nil, fmt.Errorf("query user %q: %w", req.Username, err)
 	}
+	if row == nil {
+		span.SetAttributes(attribute.Bool("auth.success", false))
+		span.AddEvent("authentication.failed")
+		return nil, fmt.Errorf("authenticate user %q: %w", req.Username, ErrUserNotFound)
+	}
 
 	// Verify password
-	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(row.PasswordHash), []byte(req.Password))
 	if err != nil {
 		span.SetAttributes(attribute.Bool("auth.success", false))
 		span.AddEvent("authentication.failed")
 		return nil, fmt.Errorf("authenticate user %q: %w", req.Username, ErrInvalidCredentials)
 	}
 
-	// Update last_login timestamp
-	updateQuery := `UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1`
-	_, err = pool.Exec(ctx, updateQuery, userID)
-	if err != nil {
-		// Log error but don't fail login
-		span.RecordError(fmt.Errorf("update last_login: %w", err))
+	// Update last_login timestamp (best-effort, don't fail login)
+	if updateErr := s.users.UpdateLastLogin(ctx, row.ID); updateErr != nil {
+		span.RecordError(fmt.Errorf("update last_login: %w", updateErr))
 	}
 
-	// Create session token (simplified - in production use JWT)
-	token := fmt.Sprintf("jwt-token-v1-%d-%d", userID, time.Now().Unix())
+	// Create session token (simplified stub - in production use JWT)
+	token := fmt.Sprintf("jwt-token-v1-%d-%d", row.ID, time.Now().Unix())
 
-	// Insert session into database
-	sessionQuery := `INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)`
-	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour expiry
-	_, err = pool.Exec(ctx, sessionQuery, userID, token, expiresAt)
-	if err != nil {
-		// Log error but don't fail login
-		span.RecordError(fmt.Errorf("create session: %w", err))
+	// Persist session (best-effort, don't fail login)
+	expiresAt := time.Now().Add(24 * time.Hour)
+	if sessErr := s.sessions.Create(ctx, row.ID, token, expiresAt); sessErr != nil {
+		span.RecordError(fmt.Errorf("create session: %w", sessErr))
 	}
 
 	user := domain.User{
-		ID:       strconv.Itoa(userID),
-		Username: username,
-		Email:    email,
+		ID:       strconv.Itoa(row.ID),
+		Username: row.Username,
+		Email:    row.Email,
 	}
 
 	response := &domain.AuthResponse{
@@ -104,21 +91,14 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 	return response, nil
 }
 
-// Register handles user registration business logic
+// Register handles user registration business logic.
 func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) (*domain.AuthResponse, error) {
-	// Create span for business logic layer
 	ctx, span := middleware.StartSpan(ctx, "auth.register", trace.WithAttributes(
 		attribute.String("layer", "logic"),
 		attribute.String("username", req.Username),
 		attribute.String("email", req.Email),
 	))
 	defer span.End()
-
-	// Get database connection pool (pgx)
-	pool := database.GetPool()
-	if pool == nil {
-		return nil, errors.New("database connection not available")
-	}
 
 	// Hash password
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -128,38 +108,30 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	}
 
 	// Check if username or email already exists
-	var existingID int
-	checkQuery := `SELECT id FROM users WHERE username = $1 OR email = $2`
-	err = pool.QueryRow(ctx, checkQuery, req.Username, req.Email).Scan(&existingID)
-	if err == nil {
-		// User already exists
-		span.SetAttributes(attribute.Bool("registration.success", false))
-		return nil, fmt.Errorf("register user %q: %w", req.Username, ErrUserExists)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		// Database error
+	exists, err := s.users.ExistsByUsernameOrEmail(ctx, req.Username, req.Email)
+	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("check existing user: %w", err)
 	}
+	if exists {
+		span.SetAttributes(attribute.Bool("registration.success", false))
+		return nil, fmt.Errorf("register user %q: %w", req.Username, ErrUserExists)
+	}
 
 	// Insert new user
-	insertQuery := `INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id`
-	var userID int
-	err = pool.QueryRow(ctx, insertQuery, req.Username, req.Email, string(passwordHash)).Scan(&userID)
+	userID, err := s.users.Create(ctx, req.Username, req.Email, string(passwordHash))
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
 
-	// Create session token
+	// Create session token (simplified stub)
 	token := fmt.Sprintf("jwt-token-v1-%d-%d", userID, time.Now().Unix())
 
-	// Insert session
-	sessionQuery := `INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)`
+	// Persist session (best-effort)
 	expiresAt := time.Now().Add(24 * time.Hour)
-	_, err = pool.Exec(ctx, sessionQuery, userID, token, expiresAt)
-	if err != nil {
-		// Log error but don't fail registration
-		span.RecordError(fmt.Errorf("create session: %w", err))
+	if sessErr := s.sessions.Create(ctx, userID, token, expiresAt); sessErr != nil {
+		span.RecordError(fmt.Errorf("create session: %w", sessErr))
 	}
 
 	user := domain.User{
@@ -182,50 +154,33 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	return response, nil
 }
 
-// GetUserByToken retrieves user info from a session token (for /auth/me endpoint)
+// GetUserByToken retrieves user info from a session token (for /auth/me endpoint).
 func (s *AuthService) GetUserByToken(ctx context.Context, token string) (*domain.User, error) {
 	ctx, span := middleware.StartSpan(ctx, "auth.get_user_by_token", trace.WithAttributes(
 		attribute.String("layer", "logic"),
 	))
 	defer span.End()
 
-	pool := database.GetPool()
-	if pool == nil {
-		return nil, errors.New("database connection not available")
-	}
-
-	// Query session and join with user
-	query := `
-		SELECT u.id, u.username, u.email, s.expires_at
-		FROM sessions s
-		JOIN users u ON s.user_id = u.id
-		WHERE s.token = $1
-	`
-
-	var userID int
-	var username, email string
-	var expiresAt time.Time
-
-	err := pool.QueryRow(ctx, query, token).Scan(&userID, &username, &email, &expiresAt)
+	row, err := s.sessions.GetUserByToken(ctx, token)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			span.SetAttributes(attribute.Bool("session.valid", false))
-			return nil, fmt.Errorf("lookup session: %w", ErrSessionNotFound)
-		}
 		span.RecordError(err)
 		return nil, fmt.Errorf("query session: %w", err)
 	}
+	if row == nil {
+		span.SetAttributes(attribute.Bool("session.valid", false))
+		return nil, fmt.Errorf("lookup session: %w", ErrSessionNotFound)
+	}
 
 	// Check if session has expired
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		span.SetAttributes(attribute.Bool("session.valid", false))
-		return nil, fmt.Errorf("session expired at %v: %w", expiresAt, ErrSessionExpired)
+		return nil, fmt.Errorf("session expired at %v: %w", row.ExpiresAt, ErrSessionExpired)
 	}
 
 	user := &domain.User{
-		ID:       strconv.Itoa(userID),
-		Username: username,
-		Email:    email,
+		ID:       strconv.Itoa(row.UserID),
+		Username: row.Username,
+		Email:    row.Email,
 	}
 
 	span.SetAttributes(
