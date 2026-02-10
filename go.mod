@@ -1,6 +1,6 @@
 module github.com/duynhne/auth-service
 
-go 1.25.5
+go 1.25.7
 
 require (
 	github.com/duynhne/pkg v0.1.0
