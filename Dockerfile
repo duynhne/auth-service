@@ -1,5 +1,5 @@
 # Build stage
-FROM docker.io/library/golang:1.25.7-alpine AS builder
+FROM docker.io/library/golang:1.25.8-alpine AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /app/auth-service ./cmd/main.go
 # Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates
 WORKDIR /root/
 
 COPY --from=builder /app/auth-service .

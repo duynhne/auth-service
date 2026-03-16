@@ -93,6 +93,7 @@ type DatabaseConfig struct {
 	Port           string // Database port - from DB_PORT env (default: "5432")
 	Name           string // Database name - from DB_NAME env
 	User           string // Database user - from DB_USER env
+	// nolint:gosec // G117: This is a configuration field for the database password
 	Password       string // Database password - from DB_PASSWORD env
 	SSLMode        string // SSL mode - from DB_SSLMODE env (default: "disable")
 	MaxConnections int    // Max connections - from DB_POOL_MAX_CONNECTIONS env (default: 25)
