@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   packages: write
+  pull-requests: read
   id-token: write
   actions: read
   security-events: write
@@ -29,7 +30,7 @@ jobs:
     needs: [go-check, gitleaks]
     uses: duyhenryer/shared-workflows/.github/workflows/sonarqube.yml@main
     with:
-      project-key: 'duynhlab_auth-service'
+      project-key: 'duynhlab_${{ github.event.repository.name }}'
       organization: 'duynhlab'
       fail-on-quality-gate: false
     secrets:
@@ -39,7 +40,7 @@ jobs:
     needs: [go-check, sonar]
     uses: duyhenryer/shared-workflows/.github/workflows/docker-build-go.yml@main
     with:
-      image-name: 'auth-service'
+      image-name: ${{ github.event.repository.name }}
       push: true
       scan-before-push: true
       scan-severity: 'CRITICAL,HIGH'
@@ -55,7 +56,7 @@ jobs:
     if: needs.docker-build.outputs.scan-status == 'pass'
     uses: duyhenryer/shared-workflows/.github/workflows/trivy-scan.yml@main
     with:
-      image-ref: ghcr.io/${{ github.repository }}/auth-service@${{ needs.docker-build.outputs.digest }}
+      image-ref: ghcr.io/${{ github.repository }}/${{ github.event.repository.name }}@${{ needs.docker-build.outputs.digest }}
       severity: 'CRITICAL,HIGH,MEDIUM'
       exit-code: '0'
       ignore-unfixed: true
@@ -81,7 +82,7 @@ jobs:
     needs: [go-check, sonar]
     uses: duyhenryer/shared-workflows/.github/workflows/docker-build-go.yml@main
     with:
-      image-name: 'auth-service-init'
+      image-name: '${{ github.event.repository.name }}-init'
       dockerfile: 'db/migrations/Dockerfile'
       context: 'db/migrations'
       push: true
