@@ -3,7 +3,7 @@ module github.com/duynhne/auth-service
 go 1.25.9
 
 require (
-	github.com/duynhne/pkg v0.1.0
+	github.com/duynhne/pkg v0.1.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/grafana/pyroscope-go v1.2.7
 	github.com/jackc/pgx/v5 v5.8.0
