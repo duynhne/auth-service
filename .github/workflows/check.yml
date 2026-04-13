@@ -34,7 +34,7 @@ jobs:
     needs: [go-check, gitleaks]
     uses: duyhenryer/shared-workflows/.github/workflows/sonarqube.yml@main
     with:
-      project-key: 'duynhlab_auth-service'
+      project-key: 'duynhlab_${{ github.event.repository.name }}'
       organization: 'duynhlab'
       fail-on-quality-gate: false
     secrets:
