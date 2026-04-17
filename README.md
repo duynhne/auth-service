@@ -11,13 +11,16 @@ Authentication microservice for user login, registration, and JWT token manageme
 
 ## API Endpoints
 
-> **Browser callers** hit the Kong gateway at `https://gateway.duynhne.me/auth/v1/{public,private}/…`; Kong rewrites to the cluster paths below. See [homelab naming convention](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).
+All routes follow Variant A naming — single path for browser and in-cluster callers. See [homelab naming convention](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).
 
-| Method | Cluster path | Edge path (via gateway) |
-|--------|--------------|-------------------------|
-| `POST` | `/api/v1/auth/login` | `/auth/v1/public/login` |
-| `POST` | `/api/v1/auth/register` | `/auth/v1/public/register` |
-| `GET` | `/api/v1/auth/me` | `/auth/v1/private/me` |
+| Method | Path | Audience |
+|--------|------|----------|
+| `POST` | `/auth/v1/public/login` | public |
+| `POST` | `/auth/v1/public/register` | public |
+| `GET` | `/auth/v1/private/me` | private |
+
+- Browser: `https://gateway.duynhne.me/auth/v1/…`
+- Service-to-service (JWT validation): `http://auth.auth.svc.cluster.local:8080/auth/v1/private/me`
 
 ## Tech Stack
 

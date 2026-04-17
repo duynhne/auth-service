@@ -142,22 +142,12 @@ go build ./... && go test ./... && golangci-lint run --timeout=10m
 
 ## 🔌 API Reference
 
-### Cluster paths (what this service mounts)
+Routes are mounted directly at `/{service}/v1/{audience}/…` (Variant A — single URL shape across browser and in-cluster callers). Kong is pure pass-through.
 
-| Method | Cluster path | Audience | Description |
-|--------|--------------|----------|-------------|
-| `POST` | `/api/v1/auth/login` | public | User login, returns JWT token |
-| `POST` | `/api/v1/auth/register` | public | User registration |
-| `GET` | `/api/v1/auth/me` | private | Get current user from token (reads `Authorization` header directly) |
+| Method | Path | Audience | Description |
+|--------|------|----------|-------------|
+| `POST` | `/auth/v1/public/login` | public | User login, returns JWT token |
+| `POST` | `/auth/v1/public/register` | public | User registration |
+| `GET` | `/auth/v1/private/me` | private | Returns current user from `Authorization: Bearer <token>`; called by every other service's JWT middleware |
 
-### Edge paths (what the browser sends)
-
-Browser traffic hits Kong at `gateway.duynhne.me` using Variant A edge naming. Kong's `pre-function` plugin in the `auth` namespace rewrites `/auth/v1/{audience}/<verb>` → `/api/v1/auth/<verb>`. **Do not change the service's route mounts** — add/modify routes on `/api/v1/auth/*` and let Kong handle the edge.
-
-| Edge path (browser) | → Cluster path (this service) |
-|---------------------|-------------------------------|
-| `POST gateway.duynhne.me/auth/v1/public/login` | `POST /api/v1/auth/login` |
-| `POST gateway.duynhne.me/auth/v1/public/register` | `POST /api/v1/auth/register` |
-| `GET gateway.duynhne.me/auth/v1/private/me` | `GET /api/v1/auth/me` |
-
-Convention + rewrite rule: [`homelab/docs/api/api-naming-convention.md`](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).
+Full convention + inventory: [`homelab/docs/api/api-naming-convention.md`](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).

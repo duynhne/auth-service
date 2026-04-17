@@ -24,11 +24,12 @@ func NewHandler(auth *logicv1.AuthService) *Handler {
 	return &Handler{auth: auth}
 }
 
-// RegisterRoutes registers all auth API v1 routes on the given router group.
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.POST("/auth/login", h.Login)
-	rg.POST("/auth/register", h.Register)
-	rg.GET("/auth/me", h.GetMe)
+// RegisterRoutes mounts auth v1 routes using Variant A edge naming
+// (see homelab/docs/api/api-naming-convention.md).
+func (h *Handler) RegisterRoutes(r gin.IRouter) {
+	r.POST("/auth/v1/public/login", h.Login)
+	r.POST("/auth/v1/public/register", h.Register)
+	r.GET("/auth/v1/private/me", h.GetMe)
 }
 
 // Login handles HTTP request for user login.
@@ -124,7 +125,7 @@ func (h *Handler) Register(c *gin.Context) {
 }
 
 // GetMe handles HTTP request to get current user from session token.
-// GET /api/v1/auth/me
+// GET /auth/v1/private/me
 // Authorization: Bearer <token>
 func (h *Handler) GetMe(c *gin.Context) {
 	ctx, span := middleware.StartSpan(c.Request.Context(), "http.request", trace.WithAttributes(
