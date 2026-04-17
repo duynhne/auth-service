@@ -142,8 +142,22 @@ go build ./... && go test ./... && golangci-lint run --timeout=10m
 
 ## 🔌 API Reference
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/auth/login` | User login, returns JWT token |
-| `POST` | `/api/v1/auth/register` | User registration |
-| `GET` | `/api/v1/auth/me` | Get current user from token |
+### Cluster paths (what this service mounts)
+
+| Method | Cluster path | Audience | Description |
+|--------|--------------|----------|-------------|
+| `POST` | `/api/v1/auth/login` | public | User login, returns JWT token |
+| `POST` | `/api/v1/auth/register` | public | User registration |
+| `GET` | `/api/v1/auth/me` | private | Get current user from token (reads `Authorization` header directly) |
+
+### Edge paths (what the browser sends)
+
+Browser traffic hits Kong at `gateway.duynhne.me` using Variant A edge naming. Kong's `pre-function` plugin in the `auth` namespace rewrites `/auth/v1/{audience}/<verb>` → `/api/v1/auth/<verb>`. **Do not change the service's route mounts** — add/modify routes on `/api/v1/auth/*` and let Kong handle the edge.
+
+| Edge path (browser) | → Cluster path (this service) |
+|---------------------|-------------------------------|
+| `POST gateway.duynhne.me/auth/v1/public/login` | `POST /api/v1/auth/login` |
+| `POST gateway.duynhne.me/auth/v1/public/register` | `POST /api/v1/auth/register` |
+| `GET gateway.duynhne.me/auth/v1/private/me` | `GET /api/v1/auth/me` |
+
+Convention + rewrite rule: [`homelab/docs/api/api-naming-convention.md`](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).
