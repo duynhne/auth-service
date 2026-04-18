@@ -11,11 +11,16 @@ Authentication microservice for user login, registration, and JWT token manageme
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/auth/login` | User login |
-| `POST` | `/api/v1/auth/register` | User registration |
-| `GET` | `/api/v1/auth/me` | Get current user |
+All routes follow Variant A naming — single path for browser and in-cluster callers. See [homelab naming convention](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).
+
+| Method | Path | Audience |
+|--------|------|----------|
+| `POST` | `/auth/v1/public/login` | public |
+| `POST` | `/auth/v1/public/register` | public |
+| `GET` | `/auth/v1/private/me` | private |
+
+- Browser: `https://gateway.duynhne.me/auth/v1/…`
+- Service-to-service (JWT validation): `http://auth.auth.svc.cluster.local:8080/auth/v1/private/me`
 
 ## Tech Stack
 

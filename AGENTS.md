@@ -142,8 +142,12 @@ go build ./... && go test ./... && golangci-lint run --timeout=10m
 
 ## 🔌 API Reference
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/auth/login` | User login, returns JWT token |
-| `POST` | `/api/v1/auth/register` | User registration |
-| `GET` | `/api/v1/auth/me` | Get current user from token |
+Routes are mounted directly at `/{service}/v1/{audience}/…` (Variant A — single URL shape across browser and in-cluster callers). Kong is pure pass-through.
+
+| Method | Path | Audience | Description |
+|--------|------|----------|-------------|
+| `POST` | `/auth/v1/public/login` | public | User login, returns JWT token |
+| `POST` | `/auth/v1/public/register` | public | User registration |
+| `GET` | `/auth/v1/private/me` | private | Returns current user from `Authorization: Bearer <token>`; called by every other service's JWT middleware |
+
+Full convention + inventory: [`homelab/docs/api/api-naming-convention.md`](https://github.com/duynhlab/homelab/blob/main/docs/api/api-naming-convention.md).

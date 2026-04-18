@@ -123,9 +123,8 @@ func setupServer(cfg *config.Config, handler *webv1.Handler, isShuttingDown *ato
 	// Metrics endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// API v1 (canonical API - frontend-aligned)
-	apiV1 := r.Group("/api/v1")
-	handler.RegisterRoutes(apiV1)
+	// Auth v1 routes — Variant A edge naming (see api-naming-convention.md)
+	handler.RegisterRoutes(r)
 
 	// Create HTTP server with ReadHeaderTimeout to prevent Slowloris attacks
 	return &http.Server{
